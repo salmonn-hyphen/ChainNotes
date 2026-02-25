@@ -8,13 +8,17 @@ export default function NoteForm({ onAdd, disabled }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!content.trim()) return;
+    const trimmedContent = content.trim();
+    if (!trimmedContent) return;
+
+    const trimmedCategory = category.trim();
     const tags = tagsInput
       .split(",")
       .map((t) => t.trim())
       .filter((t) => t.length > 0);
 
-    onAdd(content, category.trim(), tags);
+    onAdd(trimmedContent, trimmedCategory, tags);
+
     setContent("");
     setCategory("");
     setTagsInput("");
@@ -23,7 +27,7 @@ export default function NoteForm({ onAdd, disabled }) {
   return (
     <form
       onSubmit={handleSubmit}
-      className="bg-gray-800 rounded-2xl p-4 border border-gray-700 shadow-lg"
+      className="bg-gray-800 rounded-2xl p-4 border border-gray-700 shadow-lg space-y-3"
     >
       <textarea
         value={content}
@@ -33,26 +37,26 @@ export default function NoteForm({ onAdd, disabled }) {
         disabled={disabled}
       />
 
-      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
         <input
           type="text"
           value={category}
           onChange={(e) => setCategory(e.target.value)}
-          placeholder="Category (e.g. Work, Personal)"
-          className="bg-gray-900/60 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          placeholder="Category (optional)"
+          className="bg-gray-900/60 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
           disabled={disabled}
         />
         <input
           type="text"
           value={tagsInput}
           onChange={(e) => setTagsInput(e.target.value)}
-          placeholder="Tags (comma separated: blockchain,react,idea)"
-          className="bg-gray-900/60 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          placeholder="Tags (comma separated)"
+          className="bg-gray-900/60 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
           disabled={disabled}
         />
       </div>
 
-      <div className="flex justify-end mt-3 pt-2 border-t border-gray-700/50">
+      <div className="flex justify-end mt-2 pt-2 border-t border-gray-700/50">
         <button
           type="submit"
           disabled={disabled || !content.trim()}

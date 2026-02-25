@@ -17,10 +17,35 @@ function App() {
   const [tagQuery, setTagQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [view, setView] = useState("home"); // "home" = last 3 notes, "all" = full list
+
+  const [allNotesPage, setAllNotesPage] = useState(1);
+
+  const [editingNote, setEditingNote] = useState(null);
+  const [isEditingMode, setIsEditingMode] = useState(false);
+  const [editContent, setEditContent] = useState("");
+  const [editCategory, setEditCategory] = useState("");
+  const [editTagsInput, setEditTagsInput] = useState("");
 
   useEffect(() => {
     checkIfWalletIsConnected();
   }, []);
+
+  useEffect(() => {
+    if (editingNote) {
+      setEditContent(editingNote.content || "");
+      setEditCategory(editingNote.category || "");
+      setEditTagsInput((editingNote.tags || []).join(", "));
+      setIsEditingMode(false); // Default to view mode when opening
+    }
+  }, [editingNote]);
+
+  useEffect(() => {
+    // Reset pagination when filters, notes, or view change
+    if (view === "all") {
+      setAllNotesPage(1);
+    }
+  }, [selectedCategory, tagQuery, notes, view]);
 
   const checkIfWalletIsConnected = async () => {
     try {
@@ -44,6 +69,7 @@ function App() {
   const handleRefreshAccount = async () => {
     // Re-run the wallet/account + contract setup flow so that
     // any account changes in MetaMask are reflected in the UI
+    setError("");
     await checkIfWalletIsConnected();
   };
 
@@ -64,6 +90,7 @@ function App() {
         alert("Get MetaMask!");
         return;
       }
+      setError("");
       const accounts = await ethereum.request({
         method: "eth_requestAccounts",
       });
@@ -76,6 +103,7 @@ function App() {
 
   const setupContract = async (ethereum) => {
     try {
+      setError("");
       const provider = new BrowserProvider(ethereum);
       const signer = await provider.getSigner();
 
@@ -193,6 +221,7 @@ function App() {
       return;
     }
     try {
+      setError("");
       setLoading(true);
       const encrypted = CryptoJS.AES.encrypt(content, encryptionKey).toString();
 
@@ -207,7 +236,8 @@ function App() {
       }
 
       const payload = cid || encrypted;
-      const tx = await contract.createNote(payload, category, tags);
+      // Defaulting isPublic to false for now, until UI supports it
+      const tx = await contract.createNote(payload, category, tags, false);
       await tx.wait();
       await fetchNotes();
     } catch (error) {
@@ -225,6 +255,7 @@ function App() {
       return;
     }
     try {
+      setError("");
       setLoading(true);
       const encrypted = CryptoJS.AES.encrypt(
         newContent,
@@ -242,7 +273,7 @@ function App() {
       }
 
       const payload = cid || encrypted;
-      const tx = await contract.updateNote(id, payload, category, tags);
+      const tx = await contract.updateNote(id, payload, category, tags, false);
       await tx.wait();
       await fetchNotes();
     } catch (error) {
@@ -253,6 +284,27 @@ function App() {
     }
   };
 
+  const handleSaveEditedNote = () => {
+    if (!editingNote) return;
+
+    const trimmedContent = editContent.trim();
+    const trimmedCategory = editCategory.trim();
+    const tags = editTagsInput
+      .split(",")
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+
+    if (
+      trimmedContent !== editingNote.content ||
+      trimmedCategory !== (editingNote.category || "") ||
+      tags.join(",") !== (editingNote.tags || []).join(",")
+    ) {
+      updateNote(editingNote.id, trimmedContent, trimmedCategory, tags);
+    }
+
+    setEditingNote(null);
+  };
+
   const deleteNote = async (id) => {
     if (!contract) return;
     try {
@@ -260,6 +312,7 @@ function App() {
       const tx = await contract.deleteNote(id);
       await tx.wait();
       await fetchNotes();
+      setEditingNote(null);
     } catch (error) {
       console.error("Error deleting note:", error);
     } finally {
@@ -283,6 +336,16 @@ function App() {
 
     return matchesCategory && matchesTag;
   });
+
+  const pageSize = 10;
+  const totalPages = Math.max(1, Math.ceil(filteredNotes.length / pageSize));
+  const currentPage = Math.min(allNotesPage, totalPages);
+  const paginatedNotes = filteredNotes.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
+  );
+
+  const latestNotes = notes.slice(0, 3);
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 font-sans selection:bg-indigo-500 selection:text-white">
@@ -331,66 +394,153 @@ function App() {
       <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {error && (
           <div className="bg-red-500/10 border border-red-500/50 text-red-400 px-4 py-3 rounded-lg mb-6">
-            {error}
+            <div className="flex items-start justify-between gap-3">
+              <span className="text-sm">{error}</span>
+              <button
+                type="button"
+                onClick={() => setError("")}
+                className="ml-4 text-red-300 hover:text-red-100 hover:bg-red-500/20 rounded-full px-2 py-1 text-xs font-semibold"
+              >
+                Close
+              </button>
+            </div>
           </div>
         )}
 
         {account ? (
-          <div className="grid grid-cols-1 md:grid-cols-[260px,1fr] gap-8">
-            <aside className="bg-gray-800/60 border border-gray-700/60 rounded-2xl p-4 h-fit">
-              <h3 className="text-sm font-semibold text-gray-200 mb-3">
-                Filter by Category
-              </h3>
-              <div className="flex flex-wrap gap-2 mb-4">
-                {[
-                  "All",
-                  ...Array.from(
-                    new Set(
-                      notes
-                        .map((n) => (n.category || "").trim())
-                        .filter((c) => c.length > 0),
-                    ),
-                  ),
-                ].map((cat) => (
-                  <button
-                    key={cat}
-                    onClick={() => setSelectedCategory(cat)}
-                    className={`px-3 py-1 rounded-full text-xs border transition-colors ${selectedCategory === cat ? "bg-indigo-600 text-white border-indigo-500" : "bg-gray-900/60 text-gray-300 border-gray-700 hover:bg-gray-700/60"}`}
-                  >
-                    {cat}
-                  </button>
-                ))}
-              </div>
-
-              <h3 className="text-sm font-semibold text-gray-200 mb-2">
-                Search by Tag
-              </h3>
-              <input
-                type="text"
-                value={tagQuery}
-                onChange={(e) => setTagQuery(e.target.value)}
-                placeholder="Type a tag name..."
-                className="w-full bg-gray-900/60 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              />
-            </aside>
-
+          view === "home" ? (
             <div className="space-y-8">
+              <h2 className="text-xl font-semibold text-white">Recent Notes</h2>
+
               <NoteForm onAdd={addNote} disabled={loading} />
 
-              {loading && filteredNotes.length === 0 ? (
+              {loading && latestNotes.length === 0 ? (
                 <div className="flex justify-center py-12">
                   <Spinner />
                 </div>
               ) : (
                 <NoteList
-                  notes={filteredNotes}
-                  onUpdate={updateNote}
+                  notes={latestNotes}
                   onDelete={deleteNote}
                   disabled={loading}
+                  onOpenNote={setEditingNote}
                 />
               )}
+
+              {notes.length > 3 && (
+                <div className="flex justify-center mt-4">
+                  <button
+                    onClick={() => setView("all")}
+                    className="text-sm font-medium text-indigo-400 hover:text-indigo-300 px-4 py-2 rounded-lg hover:bg-indigo-500/10 border border-indigo-500/40 transition-colors"
+                  >
+                    See all notes
+                  </button>
+                </div>
+              )}
             </div>
-          </div>
+          ) : (
+            <div className="space-y-6">
+              <button
+                onClick={() => setView("home")}
+                className="text-sm font-medium text-gray-300 hover:text-white px-3 py-1 rounded-lg hover:bg-gray-700/70 border border-transparent hover:border-gray-600 transition-colors"
+              >
+                ← Back to recent
+              </button>
+
+              <div className="grid grid-cols-1 md:grid-cols-[260px,1fr] gap-8">
+                <aside className="bg-gray-800/60 border border-gray-700/60 rounded-2xl p-4 h-fit mt-2">
+                  <h3 className="text-sm font-semibold text-gray-200 mb-4">
+                    Filter &amp; Search
+                  </h3>
+
+                  <h4 className="text-xs font-semibold text-gray-400 mb-2">
+                    Category
+                  </h4>
+                  <div className="flex flex-wrap gap-2 mb-4">
+                    {[
+                      "All",
+                      ...Array.from(
+                        new Set(
+                          notes
+                            .map((n) => (n.category || "").trim())
+                            .filter((c) => c.length > 0),
+                        ),
+                      ),
+                    ].map((cat) => (
+                      <button
+                        key={cat}
+                        onClick={() => setSelectedCategory(cat)}
+                        className={`px-3 py-1 rounded-full text-xs border transition-colors ${selectedCategory === cat ? "bg-indigo-600 text-white border-indigo-500" : "bg-gray-900/60 text-gray-300 border-gray-700 hover:bg-gray-700/60"}`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+
+                  <h4 className="text-xs font-semibold text-gray-400 mb-2">
+                    Search by Tag
+                  </h4>
+                  <input
+                    type="text"
+                    value={tagQuery}
+                    onChange={(e) => setTagQuery(e.target.value)}
+                    placeholder="Type a tag name..."
+                    className="w-full bg-gray-900/60 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                </aside>
+
+                <div className="space-y-8">
+                  <h2 className="text-xl font-semibold text-white">
+                    All Notes
+                  </h2>
+
+                  {loading && filteredNotes.length === 0 ? (
+                    <div className="flex justify-center py-12">
+                      <Spinner />
+                    </div>
+                  ) : (
+                    <NoteList
+                      notes={paginatedNotes}
+                      onDelete={deleteNote}
+                      disabled={loading}
+                      onOpenNote={setEditingNote}
+                      fullWidth
+                    />
+                  )}
+
+                  {filteredNotes.length > pageSize && (
+                    <div className="flex items-center justify-between pt-4 border-t border-gray-800">
+                      <span className="text-xs text-gray-400">
+                        Page {currentPage} of {totalPages}
+                      </span>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={currentPage === 1}
+                          onClick={() =>
+                            setAllNotesPage((p) => Math.max(1, p - 1))
+                          }
+                          className="px-3 py-1 rounded-lg text-xs border border-gray-700 text-gray-300 hover:text-white hover:bg-gray-700/70 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          Previous
+                        </button>
+                        <button
+                          type="button"
+                          disabled={currentPage === totalPages}
+                          onClick={() =>
+                            setAllNotesPage((p) => Math.min(totalPages, p + 1))
+                          }
+                          className="px-3 py-1 rounded-lg text-xs border border-gray-700 text-gray-300 hover:text-white hover:bg-gray-700/70 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )
         ) : (
           <div className="text-center py-20">
             <h2 className="text-3xl font-bold text-white mb-4">
@@ -403,6 +553,134 @@ function App() {
           </div>
         )}
       </main>
+
+      {editingNote && (
+        <div
+          className="fixed inset-0 bg-gray-900/70 backdrop-blur-sm flex items-center justify-center z-50"
+          onClick={() => setEditingNote(null)}
+        >
+          <div
+            className="bg-gray-900 rounded-2xl border border-gray-700 max-w-xl w-full mx-4 p-6 shadow-2xl flex flex-col max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between mb-4 flex-shrink-0">
+              <div>
+                <h2 className="text-lg font-semibold text-white mb-1">
+                  {isEditingMode ? "Edit Note" : "Note Details"}
+                </h2>
+                <p className="text-xs text-gray-500">
+                  {new Date(editingNote.timestamp * 1000).toLocaleString()}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingNote(null)}
+                className="text-gray-400 hover:text-gray-200 hover:bg-gray-700/70 rounded-full p-1 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            {isEditingMode ? (
+              // EDIT MODE
+              <div className="flex flex-col gap-3 flex-1 overflow-y-auto">
+                <textarea
+                  value={editContent}
+                  onChange={(e) => setEditContent(e.target.value)}
+                  className="w-full bg-gray-900/60 text-gray-100 rounded-lg p-3 resize-none focus:outline-none focus:ring-1 focus:ring-indigo-500 min-h-[160px] border border-gray-700 font-sans"
+                />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    value={editCategory}
+                    onChange={(e) => setEditCategory(e.target.value)}
+                    placeholder="Category"
+                    className="bg-gray-900/60 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                  <input
+                    type="text"
+                    value={editTagsInput}
+                    onChange={(e) => setEditTagsInput(e.target.value)}
+                    placeholder="Tags (comma separated)"
+                    className="bg-gray-900/60 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+            ) : (
+              // VIEW MODE
+              <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar relative">
+                <div className="text-gray-200 whitespace-pre-wrap leading-relaxed text-base break-words min-h-[100px]">
+                  {editingNote.content}
+                </div>
+
+                {(editingNote.category || editingNote.tags.length > 0) && (
+                  <div className="mt-6 pt-4 border-t border-gray-800 flex flex-wrap gap-2">
+                    {editingNote.category && (
+                      <span className="bg-indigo-500/10 text-indigo-300 border border-indigo-500/30 px-2 py-1 rounded text-xs">
+                        {editingNote.category}
+                      </span>
+                    )}
+                    {editingNote.tags.map((t) => (
+                      <span
+                        key={t}
+                        className="bg-gray-800 text-gray-400 border border-gray-700 px-2 py-1 rounded text-xs"
+                      >
+                        #{t}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 mt-6 pt-4 border-t border-gray-800 flex-shrink-0">
+              {isEditingMode ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingMode(false)}
+                    className="px-4 py-2 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-gray-700/70 border border-transparent hover:border-gray-600 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveEditedNote}
+                    disabled={loading}
+                    className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-700 disabled:text-gray-500 text-white transition-colors"
+                  >
+                    Save Changes
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => deleteNote(editingNote.id)}
+                    className="px-4 py-2 rounded-lg text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-transparent transition-colors mr-auto"
+                  >
+                    Delete Note
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingNote(null)}
+                    className="px-4 py-2 rounded-lg text-sm text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 border border-transparent transition-colors"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingMode(true)}
+                    className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white transition-colors flex items-center gap-2"
+                  >
+                    Edit Note
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Global Loading Overlay for Transactions */}
       {loading && notes.length > 0 && (
